@@ -1,5 +1,7 @@
 package com.qiao.yunpicturebackend.manager.cache;
 
+import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.json.JSONUtil;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.Expiry;
@@ -14,11 +16,10 @@ import java.util.concurrent.TimeUnit;
  * 通过 {@link Expiry} 支持按条目设置过期时间（与 Redis 的按 Key 过期语义保持一致）。
  * 过期时间已实现上下20%的随机抖动，避免缓存过期时大量请求同时击穿。
  *
- * @param <V> 缓存值类型
  */
-public class CaffeineCacheManager<V> extends CacheManager<V> {
+public class CaffeineCacheManager extends CacheManager {
 
-    private final Cache<String, CacheEntry<V>> cache;
+    private final Cache<String, CacheEntry> cache;
 
     public CaffeineCacheManager(String name, long defaultExpireSeconds, long maximumSize) {
         super(name, defaultExpireSeconds);
@@ -27,13 +28,13 @@ public class CaffeineCacheManager<V> extends CacheManager<V> {
                 // Caffeine 默认的 expireAfterWrite/expireAfterAccess 只能设置「全局统一」的过期时间，
                 // 无法让每个条目拥有不同的 TTL。这里改用 Expiry 接口，从条目本身读取过期时间，
                 // 从而实现与 Redis 一致的「按 Key 设置过期时间」。
-                .expireAfter(new Expiry<String, CacheEntry<V>>() {
+                .expireAfter(new Expiry<String, CacheEntry>() {
                     /**
                      * 条目「首次写入」时，返回该条目剩余存活时长（纳秒）。
                      * 这里是写入时刻的起点，过期时长直接取条目自带的 expireNanos。
                      */
                     @Override
-                    public long expireAfterCreate(String key, CacheEntry<V> entry, long currentTime) {
+                    public long expireAfterCreate(String key, CacheEntry entry, long currentTime) {
                         return entry.expireNanos;
                     }
 
@@ -42,7 +43,7 @@ public class CaffeineCacheManager<V> extends CacheManager<V> {
                      * 返回 entry.expireNanos 表示更新后重新计时，等同于 expireAfterWrite 语义。
                      */
                     @Override
-                    public long expireAfterUpdate(String key, CacheEntry<V> entry, long currentTime, long currentDuration) {
+                    public long expireAfterUpdate(String key, CacheEntry entry, long currentTime, long currentDuration) {
                         return entry.expireNanos;
                     }
 
@@ -52,7 +53,7 @@ public class CaffeineCacheManager<V> extends CacheManager<V> {
                      * 即「写入后过期」语义；若想实现「访问后过期」，可改为 return entry.expireNanos。
                      */
                     @Override
-                    public long expireAfterRead(String key, CacheEntry<V> entry, long currentTime, long currentDuration) {
+                    public long expireAfterRead(String key, CacheEntry entry, long currentTime, long currentDuration) {
                         return currentDuration;
                     }
                 })
@@ -60,14 +61,15 @@ public class CaffeineCacheManager<V> extends CacheManager<V> {
     }
 
     @Override
-    protected V doGet(String fullKey) {
-        CacheEntry<V> entry = cache.getIfPresent(fullKey);
-        return entry == null ? null : entry.value;
+    protected <V> V doGet(String fullKey, Class<V> valueType) {
+        CacheEntry entry = cache.getIfPresent(fullKey);
+        return entry == null ? null : BeanUtil.toBean(entry.value, valueType);
     }
 
     @Override
-    protected void doPut(String fullKey, V value, long expireSeconds) {
-        cache.put(fullKey, new CacheEntry<>(value, TimeUnit.SECONDS.toNanos(expireSeconds)));
+    protected <V> void doPut(String fullKey, V value, long expireSeconds) {
+        String jsonValue = JSONUtil.toJsonStr(value);
+        cache.put(fullKey, new CacheEntry(jsonValue, TimeUnit.SECONDS.toNanos(expireSeconds)));
     }
 
     @Override
@@ -84,8 +86,8 @@ public class CaffeineCacheManager<V> extends CacheManager<V> {
      * 缓存条目包装，携带自身的过期时间（纳秒）
      */
     @Value
-    private static class CacheEntry<V> {
-        V value;
+    private static class CacheEntry {
+        String value;
         long expireNanos;
     }
 }

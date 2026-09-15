@@ -12,9 +12,8 @@ import java.util.function.Function;
  * 具体存储介质相关的操作由子类通过实现 {@link #doGet} / {@link #doPut} / {@link #doDelete} / {@link #doExists}
  * 等钩子方法完成，从而支持以继承方式扩展（如 Redis、Caffeine 等）。
  *
- * @param <V> 缓存值类型
  */
-public abstract class CacheManager<V> {
+public abstract class CacheManager {
     /**
      * 缓存名称，用于拼接 Key 前缀，区分不同业务缓存空间
      */
@@ -54,8 +53,8 @@ public abstract class CacheManager<V> {
      * @param loader 回源加载函数，仅在缓存未命中时触发
      * @return 缓存值
      */
-    public V get(String key, Function<String, V> loader) {
-        return get(key, loader, defaultExpireSeconds);
+    public<V> V get(String key, Class<V> valueType, Function<String, V> loader) {
+        return get(key, valueType, loader, defaultExpireSeconds);
     }
 
     /**
@@ -66,9 +65,9 @@ public abstract class CacheManager<V> {
      * @param expireSeconds 过期时间（秒），小于等于 0 时使用默认过期时间
      * @return 缓存值
      */
-    public V get(String key, Function<String, V> loader, long expireSeconds) {
+    public<V> V get(String key, Class<V> valueType, Function<String, V> loader, long expireSeconds) {
         String cacheKey = buildKey(key);
-        V value = doGet(cacheKey);
+        V value = doGet(cacheKey, valueType);
         if (value != null) {
             return value;
         }
@@ -83,15 +82,15 @@ public abstract class CacheManager<V> {
 
     // ==================== 基础操作方法（公共逻辑） ====================
 
-    public V get(String key) {
-        return doGet(buildKey(key));
+    public<V> V get(String key, Class<V> valueType) {
+        return doGet(buildKey(key), valueType);
     }
 
-    public void put(String key, V value) {
+    public<V> void put(String key, V value) {
         put(key, value, defaultExpireSeconds);
     }
 
-    public void put(String key, V value, long expireSeconds) {
+    public<V> void put(String key, V value, long expireSeconds) {
         doPut(buildKey(key), value, resolveExpire(expireSeconds));
     }
 
@@ -140,9 +139,10 @@ public abstract class CacheManager<V> {
      * 从具体缓存介质读取值
      *
      * @param fullKey 已拼接前缀的完整键
+     * @param valueType 缓存值类型
      * @return 缓存值，未命中返回 null
      */
-    protected abstract V doGet(String fullKey);
+    protected abstract <V> V doGet(String fullKey, Class<V> valueType);
 
     /**
      * 向具体缓存介质写入值
@@ -151,7 +151,7 @@ public abstract class CacheManager<V> {
      * @param value         缓存值
      * @param expireSeconds 过期时间（秒）
      */
-    protected abstract void doPut(String fullKey, V value, long expireSeconds);
+    protected abstract <V> void doPut(String fullKey, V value, long expireSeconds);
 
     /**
      * 从具体缓存介质删除值

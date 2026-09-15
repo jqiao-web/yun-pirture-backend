@@ -12,6 +12,8 @@ import com.qiao.yunpicturebackend.common.ResultUtils;
 import com.qiao.yunpicturebackend.constant.UserConstant;
 import com.qiao.yunpicturebackend.exception.ErrorCode;
 import com.qiao.yunpicturebackend.exception.ThrowUtils;
+import com.qiao.yunpicturebackend.manager.cache.CaffeineCacheManager;
+import com.qiao.yunpicturebackend.manager.cache.RedisCacheManager;
 import com.qiao.yunpicturebackend.model.dto.picture.*;
 import com.qiao.yunpicturebackend.model.entity.Picture;
 import com.qiao.yunpicturebackend.model.entity.PictureTagCategory;
@@ -24,11 +26,13 @@ import com.qiao.yunpicturebackend.service.UserService;
 import io.swagger.annotations.ApiOperation;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.util.DigestUtils;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.servlet.http.HttpServletRequest;
 import java.util.*;
+import java.util.function.Function;
 
 @RestController
 @RequestMapping("/picture")
@@ -37,6 +41,8 @@ import java.util.*;
 public class PictureController {
     private final PictureService pictureService;
     private final UserService userService;
+    private final RedisCacheManager redisCacheManager;
+    private final CaffeineCacheManager caffeineCacheManager;
 
     /**
      * 上传图片
@@ -218,6 +224,7 @@ public class PictureController {
 
     /**
      * 获取图片分页列表
+     * 缓存查询优化 key规则：项目名:方法名:md5加密查询条件
      * @param pictureQueryRequest
      * @return
      */
@@ -226,9 +233,31 @@ public class PictureController {
     @PostMapping("/list/page")
     public BaseResponse<Page<PictureAdminVO>> getPicturePage(@RequestBody PictureQueryRequest pictureQueryRequest) {
         ThrowUtils.throwIf(pictureQueryRequest == null, ErrorCode.PARAMS_ERROR);
+        // 构建key
+        String queryStr = JSONUtil.toJsonStr(pictureQueryRequest);
+        String hashKey = DigestUtils.md5DigestAsHex(queryStr.getBytes());
+        String key = ":getPicturePage:" + hashKey;
+        // 查询缓存
+        // 从Caffeine缓存中获取
+        BaseResponse baseResponse = caffeineCacheManager.get(key, BaseResponse.class);
+        if (baseResponse != null) {
+            // Caffeine缓存命中
+            return baseResponse;
+        }
+        // Caffeine缓存未命中，查询二级缓存Redis
+        baseResponse = redisCacheManager.get(key, BaseResponse.class);
+        if (baseResponse != null) {
+            // Redis缓存命中
+            return baseResponse;
+        }
+        // 二级缓存未命中，查询数据库
         QueryWrapper<Picture> queryWrapper = pictureService.getQueryWrapper(pictureQueryRequest);
         Page<Picture> picturePage = pictureService.page(new Page<>(pictureQueryRequest.getCurrent(), pictureQueryRequest.getPageSize()), queryWrapper);
-        return ResultUtils.success(pictureService.getPictureVOPage(picturePage, PictureAdminVO.class));
+        baseResponse =  ResultUtils.success(pictureService.getPictureVOPage(picturePage, PictureAdminVO.class));
+        // 添加缓存数据
+        caffeineCacheManager.put(key, baseResponse);
+        redisCacheManager.put(key, baseResponse);
+        return baseResponse;
     }
 
     /**
@@ -243,9 +272,31 @@ public class PictureController {
         // 查询已审核的图片
         pictureQueryRequest.setReviewStatus(PictureReviewStatusEnum.PASS.getValue());
         pictureQueryRequest.setReviewerId(null);
+        // 构建key
+        String queryStr = JSONUtil.toJsonStr(pictureQueryRequest);
+        String hashKey = DigestUtils.md5DigestAsHex(queryStr.getBytes());
+        String key = ":getPictureVOPage:" + hashKey;
+        // 查询缓存
+        // 从Caffeine缓存中获取
+        BaseResponse baseResponse = caffeineCacheManager.get(key, BaseResponse.class);
+        if (baseResponse != null) {
+            // Caffeine缓存命中
+            return baseResponse;
+        }
+        // Caffeine缓存未命中，查询二级缓存Redis
+        baseResponse = redisCacheManager.get(key, BaseResponse.class);
+        if (baseResponse != null) {
+            // Redis缓存命中
+            return baseResponse;
+        }
+        // 二级缓存未命中，查询数据库
         QueryWrapper<Picture> queryWrapper = pictureService.getQueryWrapper(pictureQueryRequest);
         Page<Picture> picturePage = pictureService.page(new Page<>(pictureQueryRequest.getCurrent(), pictureQueryRequest.getPageSize()), queryWrapper);
-        return ResultUtils.success(pictureService.getPictureVOPage(picturePage, PictureUserVO.class));
+        baseResponse = ResultUtils.success(pictureService.getPictureVOPage(picturePage, PictureUserVO.class));
+        // 写入二级缓存
+        caffeineCacheManager.put(key, baseResponse);
+        redisCacheManager.put(key, baseResponse);
+        return baseResponse;
     }
 
     @ApiOperation(value = "获取图片标签类别列表——登录")

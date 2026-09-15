@@ -14,26 +14,19 @@ import java.util.concurrent.TimeUnit;
  * 并传入缓存名称、默认过期时间、{@link StringRedisTemplate} 以及值类型。
  * 过期时间已实现上下20%的随机抖动，避免缓存过期时大量请求同时击穿。
  *
- * @param <V> 缓存值类型
  */
-public class RedisCacheManager<V> extends CacheManager<V> {
+public class RedisCacheManager extends CacheManager {
 
     private final StringRedisTemplate stringRedisTemplate;
 
-    /**
-     * 值类型，用于反序列化 JSON
-     */
-    private final Class<V> valueType;
-
     public RedisCacheManager(String name, long defaultExpireSeconds,
-                             StringRedisTemplate stringRedisTemplate, Class<V> valueType) {
+                             StringRedisTemplate stringRedisTemplate) {
         super(name, defaultExpireSeconds);
         this.stringRedisTemplate = stringRedisTemplate;
-        this.valueType = valueType;
     }
 
     @Override
-    protected V doGet(String fullKey) {
+    protected <V> V doGet(String fullKey, Class<V> valueType) {
         String json = stringRedisTemplate.opsForValue().get(fullKey);
         if (StrUtil.isBlank(json)) {
             return null;
@@ -42,7 +35,7 @@ public class RedisCacheManager<V> extends CacheManager<V> {
     }
 
     @Override
-    protected void doPut(String fullKey, V value, long expireSeconds) {
+    protected <V> void doPut(String fullKey, V value, long expireSeconds) {
         stringRedisTemplate.opsForValue().set(fullKey, JSONUtil.toJsonStr(value), expireSeconds, TimeUnit.SECONDS);
     }
 
@@ -53,6 +46,6 @@ public class RedisCacheManager<V> extends CacheManager<V> {
 
     @Override
     protected boolean doExists(String fullKey) {
-        return Boolean.TRUE.equals(stringRedisTemplate.hasKey(fullKey));
+        return stringRedisTemplate.hasKey(fullKey);
     }
 }
